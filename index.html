@@ -1,18 +1,20 @@
 <!DOCTYPE html>
 <html>
 <head>
+  <meta charset="UTF-8">
   <title>Telegram Web Client</title>
+
   <style>
     body {
+      margin: 0;
       font-family: Arial;
       display: flex;
       height: 100vh;
-      margin: 0;
     }
 
     #sidebar {
-      width: 200px;
-      border-right: 1px solid #ccc;
+      width: 220px;
+      border-right: 1px solid #ddd;
       overflow-y: auto;
     }
 
@@ -30,26 +32,30 @@
 
     #input {
       display: flex;
-      border-top: 1px solid #ccc;
+      border-top: 1px solid #ddd;
     }
 
     input {
       flex: 1;
       padding: 10px;
+      border: none;
+      outline: none;
     }
 
     button {
       padding: 10px;
+      border: none;
+      cursor: pointer;
     }
 
     .user {
       padding: 10px;
-      cursor: pointer;
       border-bottom: 1px solid #eee;
+      cursor: pointer;
     }
 
     .user:hover {
-      background: #f0f0f0;
+      background: #f2f2f2;
     }
   </style>
 </head>
@@ -62,59 +68,54 @@
   <div id="messages"></div>
 
   <div id="input">
-    <input id="msg" placeholder="Message...">
-    <button onclick="sendMsg()">Send</button>
+    <input id="msg" placeholder="Type message...">
+    <button onclick="sendMessage()">Send</button>
   </div>
 </div>
 
 <script>
-let token = prompt("Enter bot token:");
+let token = prompt("Enter BOT TOKEN:");
 let offset = 0;
 
 let chats = {};        // chat_id -> name
 let currentChat = null;
 
-// ───── POLL UPDATES ─────
+// ───── POLLING LOOP ─────
 async function poll() {
   try {
-    let res = await fetch(
-      `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}`
+    const res = await fetch(
+      `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=10`
     );
 
-    let data = await res.json();
+    const data = await res.json();
 
     if (data.ok) {
-      for (let u of data.result) {
-        offset = u.update_id + 1;
+      for (let update of data.result) {
+        offset = update.update_id + 1;
 
-        let msg = u.message;
+        let msg = update.message;
         if (!msg) continue;
 
         let chat = msg.chat;
         let chat_id = chat.id;
         let text = msg.text || "";
 
-        let name = chat.username ? "@" + chat.username : chat.first_name;
+        let name = chat.username
+          ? "@" + chat.username
+          : (chat.first_name || "Unknown");
 
-        // ───── ACTIVATE ON /START ─────
+        // ───── ACTIVATE USER ─────
         if (text === "/start") {
           if (!chats[chat_id]) {
             chats[chat_id] = name;
             addUser(chat_id, name);
           }
 
-          await fetch(
-            `https://api.telegram.org/bot${token}/sendMessage`,
-            {
-              method: "POST",
-              headers: {"Content-Type": "application/x-www-form-urlencoded"},
-              body: `chat_id=${chat_id}&text=Bot activated`
-            }
-          );
-
+          await sendApi(chat_id, "Bot activated ✔");
           continue;
         }
 
+        // ───── SHOW MESSAGE ─────
         if (chats[chat_id]) {
           showMessage(name, text);
         }
@@ -122,13 +123,13 @@ async function poll() {
     }
 
   } catch (e) {
-    console.log(e);
+    console.log("Error:", e);
   }
 
   setTimeout(poll, 1000);
 }
 
-// ───── ADD USER ─────
+// ───── ADD USER TO SIDEBAR ─────
 function addUser(id, name) {
   let div = document.createElement("div");
   div.className = "user";
@@ -146,27 +147,43 @@ function addUser(id, name) {
 function showMessage(name, text) {
   let box = document.getElementById("messages");
   box.innerHTML += `<div><b>${name}:</b> ${text}</div>`;
+  box.scrollTop = box.scrollHeight;
 }
 
 // ───── SEND MESSAGE ─────
-async function sendMsg() {
-  if (!currentChat) return;
+async function sendMessage() {
+  if (!currentChat) {
+    alert("Select a chat first!");
+    return;
+  }
 
-  let msg = document.getElementById("msg").value;
+  let input = document.getElementById("msg");
+  let text = input.value.trim();
 
-  await fetch(
-    `https://api.telegram.org/bot${token}/sendMessage`,
-    {
-      method: "POST",
-      headers: {"Content-Type": "application/x-www-form-urlencoded"},
-      body: `chat_id=${currentChat}&text=${msg}`
-    }
-  );
+  if (!text) return;
 
-  showMessage("You", msg);
-  document.getElementById("msg").value = "";
+  await sendApi(currentChat, text);
+
+  showMessage("You", text);
+  input.value = "";
 }
 
+// ───── TELEGRAM API WRAPPER (IMPORTANT FIX) ─────
+async function sendApi(chat_id, text) {
+  const body = new URLSearchParams();
+  body.append("chat_id", chat_id);
+  body.append("text", text);
+
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: body.toString()
+  });
+}
+
+// start loop
 poll();
 </script>
 
