@@ -1,63 +1,63 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Telegram Web Client</title>
+<meta charset="UTF-8">
+<title>Telegram Web Client</title>
 
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial;
-      display: flex;
-      height: 100vh;
-    }
+<style>
+body {
+  margin: 0;
+  font-family: Arial;
+  display: flex;
+  height: 100vh;
+}
 
-    #sidebar {
-      width: 220px;
-      border-right: 1px solid #ddd;
-      overflow-y: auto;
-    }
+#sidebar {
+  width: 220px;
+  border-right: 1px solid #ddd;
+  overflow-y: auto;
+}
 
-    #chat {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-    }
+#chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
 
-    #messages {
-      flex: 1;
-      padding: 10px;
-      overflow-y: auto;
-    }
+#messages {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+}
 
-    #input {
-      display: flex;
-      border-top: 1px solid #ddd;
-    }
+#input {
+  display: flex;
+  border-top: 1px solid #ddd;
+}
 
-    input {
-      flex: 1;
-      padding: 10px;
-      border: none;
-      outline: none;
-    }
+input {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  outline: none;
+}
 
-    button {
-      padding: 10px;
-      border: none;
-      cursor: pointer;
-    }
+button {
+  padding: 10px;
+  border: none;
+  cursor: pointer;
+}
 
-    .user {
-      padding: 10px;
-      border-bottom: 1px solid #eee;
-      cursor: pointer;
-    }
+.user {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+}
 
-    .user:hover {
-      background: #f2f2f2;
-    }
-  </style>
+.user:hover {
+  background: #f2f2f2;
+}
+</style>
 </head>
 
 <body>
@@ -69,18 +69,23 @@
 
   <div id="input">
     <input id="msg" placeholder="Type message...">
+
+    <input type="file" id="file">
+
     <button onclick="sendMessage()">Send</button>
   </div>
 </div>
 
 <script>
+
 let token = prompt("Enter BOT TOKEN:");
 let offset = 0;
 
-let chats = {};        // chat_id -> name
+let chats = {};           // chat list
+let history = {};         // chat_id -> messages[]
 let currentChat = null;
 
-// ───── POLLING LOOP ─────
+// ───── POLLING ─────
 async function poll() {
   try {
     const res = await fetch(
@@ -96,40 +101,51 @@ async function poll() {
         let msg = update.message;
         if (!msg) continue;
 
-        let chat = msg.chat;
-        let chat_id = chat.id;
-        let text = msg.text || "";
+        let chat_id = msg.chat.id;
 
-        let name = chat.username
-          ? "@" + chat.username
-          : (chat.first_name || "Unknown");
+        let name =
+          msg.chat.username
+            ? "@" + msg.chat.username
+            : (msg.chat.first_name || "Unknown");
 
-        // ───── ACTIVATE USER ─────
-        if (text === "/start") {
-          if (!chats[chat_id]) {
-            chats[chat_id] = name;
-            addUser(chat_id, name);
-          }
+        if (!history[chat_id]) history[chat_id] = [];
 
-          await sendApi(chat_id, "Bot activated ✔");
-          continue;
+        if (!chats[chat_id]) {
+          chats[chat_id] = name;
+          addUser(chat_id, name);
         }
 
-        // ───── SHOW MESSAGE ─────
-        if (chats[chat_id]) {
-          showMessage(name, text);
+        // ───── TEXT ─────
+        if (msg.text) {
+          saveMessage(chat_id, name, msg.text, "text");
+        }
+
+        // ───── PHOTO ─────
+        if (msg.photo) {
+          let fileId = msg.photo[msg.photo.length - 1].file_id;
+          saveMessage(chat_id, name, fileId, "photo");
+        }
+
+        // ───── AUDIO ─────
+        if (msg.audio) {
+          saveMessage(chat_id, name, msg.audio.file_id, "audio");
+        }
+
+        // ───── VIDEO ─────
+        if (msg.video) {
+          saveMessage(chat_id, name, msg.video.file_id, "video");
         }
       }
     }
 
   } catch (e) {
-    console.log("Error:", e);
+    console.log(e);
   }
 
   setTimeout(poll, 1000);
 }
 
-// ───── ADD USER TO SIDEBAR ─────
+// ───── USERS ─────
 function addUser(id, name) {
   let div = document.createElement("div");
   div.className = "user";
@@ -137,41 +153,125 @@ function addUser(id, name) {
 
   div.onclick = () => {
     currentChat = id;
-    document.getElementById("messages").innerHTML = "";
+    renderChat();
   };
 
   document.getElementById("sidebar").appendChild(div);
 }
 
-// ───── SHOW MESSAGE ─────
-function showMessage(name, text) {
+// ───── SAVE MESSAGE ─────
+function saveMessage(chat_id, name, data, type) {
+  history[chat_id].push({ name, data, type });
+
+  if (chat_id === currentChat) {
+    renderChat();
+  }
+}
+
+// ───── RENDER CHAT ─────
+async function renderChat() {
   let box = document.getElementById("messages");
-  box.innerHTML += `<div><b>${name}:</b> ${text}</div>`;
+  box.innerHTML = "";
+
+  if (!history[currentChat]) return;
+
+  for (let m of history[currentChat]) {
+
+    if (m.type === "text") {
+      box.innerHTML += `<div><b>${m.name}:</b> ${m.data}</div>`;
+    }
+
+    else if (m.type === "photo") {
+      let url = await getFileUrl(m.data);
+      box.innerHTML += `
+        <div><b>${m.name}:</b><br>
+        <img src="${url}" style="max-width:250px;border-radius:10px">
+        </div>`;
+    }
+
+    else if (m.type === "audio") {
+      let url = await getFileUrl(m.data);
+      box.innerHTML += `
+        <div><b>${m.name}:</b><br>
+        <audio controls src="${url}"></audio>
+        </div>`;
+    }
+
+    else if (m.type === "video") {
+      let url = await getFileUrl(m.data);
+      box.innerHTML += `
+        <div><b>${m.name}:</b><br>
+        <video controls width="250" src="${url}"></video>
+        </div>`;
+    }
+  }
+
   box.scrollTop = box.scrollHeight;
+}
+
+// ───── GET FILE URL ─────
+async function getFileUrl(file_id) {
+  let r = await fetch(
+    `https://api.telegram.org/bot${token}/getFile?file_id=${file_id}`
+  );
+
+  let data = await r.json();
+
+  return `https://api.telegram.org/file/bot${token}/${data.result.file_path}`;
 }
 
 // ───── SEND MESSAGE ─────
 async function sendMessage() {
-  if (!currentChat) {
-    alert("Select a chat first!");
+  if (!currentChat) return alert("Select chat first!");
+
+  let text = document.getElementById("msg").value;
+  let file = document.getElementById("file").files[0];
+
+  if (file) {
+    let form = new FormData();
+    form.append("chat_id", currentChat);
+
+    if (file.type.startsWith("image/")) {
+      form.append("photo", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        method: "POST",
+        body: form
+      });
+
+    } else if (file.type.startsWith("audio/")) {
+      form.append("audio", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
+        method: "POST",
+        body: form
+      });
+
+    } else if (file.type.startsWith("video/")) {
+      form.append("video", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+        method: "POST",
+        body: form
+      });
+
+    } else {
+      form.append("document", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+        method: "POST",
+        body: form
+      });
+    }
+
+    document.getElementById("file").value = "";
     return;
   }
 
-  let input = document.getElementById("msg");
-  let text = input.value.trim();
+  if (!text.trim()) return;
 
-  if (!text) return;
-
-  await sendApi(currentChat, text);
-
-  showMessage("You", text);
-  input.value = "";
-}
-
-// ───── TELEGRAM API WRAPPER (IMPORTANT FIX) ─────
-async function sendApi(chat_id, text) {
-  const body = new URLSearchParams();
-  body.append("chat_id", chat_id);
+  let body = new URLSearchParams();
+  body.append("chat_id", currentChat);
   body.append("text", text);
 
   await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
@@ -181,11 +281,12 @@ async function sendApi(chat_id, text) {
     },
     body: body.toString()
   });
+
+  document.getElementById("msg").value = "";
 }
 
-// start loop
 poll();
-</script>
 
+</script>
 </body>
 </html>
