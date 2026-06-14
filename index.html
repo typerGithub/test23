@@ -1,57 +1,63 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Telegram Web Client</title>
-  <style>
-    body {
-      font-family: Arial;
-      display: flex;
-      height: 100vh;
-      margin: 0;
-    }
+<meta charset="UTF-8">
+<title>Telegram Web Client</title>
 
-    #sidebar {
-      width: 200px;
-      border-right: 1px solid #ccc;
-      overflow-y: auto;
-    }
+<style>
+body {
+  margin: 0;
+  font-family: Arial;
+  display: flex;
+  height: 100vh;
+}
 
-    #chat {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-    }
+#sidebar {
+  width: 220px;
+  border-right: 1px solid #ddd;
+  overflow-y: auto;
+}
 
-    #messages {
-      flex: 1;
-      padding: 10px;
-      overflow-y: auto;
-    }
+#chat {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
 
-    #input {
-      display: flex;
-      border-top: 1px solid #ccc;
-    }
+#messages {
+  flex: 1;
+  padding: 10px;
+  overflow-y: auto;
+}
 
-    input {
-      flex: 1;
-      padding: 10px;
-    }
+#input {
+  display: flex;
+  border-top: 1px solid #ddd;
+}
 
-    button {
-      padding: 10px;
-    }
+input {
+  flex: 1;
+  padding: 10px;
+  border: none;
+  outline: none;
+}
 
-    .user {
-      padding: 10px;
-      cursor: pointer;
-      border-bottom: 1px solid #eee;
-    }
+button {
+  padding: 10px;
+  border: none;
+  cursor: pointer;
+}
 
-    .user:hover {
-      background: #f0f0f0;
-    }
-  </style>
+.user {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+}
+
+.user:hover {
+  background: #f2f2f2;
+}
+</style>
 </head>
 
 <body>
@@ -62,61 +68,72 @@
   <div id="messages"></div>
 
   <div id="input">
-    <input id="msg" placeholder="Message...">
-    <button onclick="sendMsg()">Send</button>
+    <input id="msg" placeholder="Type message...">
+
+    <input type="file" id="file">
+
+    <button onclick="sendMessage()">Send</button>
   </div>
 </div>
 
 <script>
-let token = prompt("Enter bot token:");
+
+let token = prompt("Enter BOT TOKEN:");
 let offset = 0;
 
-let chats = {};        // chat_id -> name
+let chats = {};           // chat list
+let history = {};         // chat_id -> messages[]
 let currentChat = null;
 
-// ───── POLL UPDATES ─────
+// ───── POLLING ─────
 async function poll() {
   try {
-    let res = await fetch(
-      `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}`
+    const res = await fetch(
+      `https://api.telegram.org/bot${token}/getUpdates?offset=${offset}&timeout=10`
     );
 
-    let data = await res.json();
+    const data = await res.json();
 
     if (data.ok) {
-      for (let u of data.result) {
-        offset = u.update_id + 1;
+      for (let update of data.result) {
+        offset = update.update_id + 1;
 
-        let msg = u.message;
+        let msg = update.message;
         if (!msg) continue;
 
-        let chat = msg.chat;
-        let chat_id = chat.id;
-        let text = msg.text || "";
+        let chat_id = msg.chat.id;
 
-        let name = chat.username ? "@" + chat.username : chat.first_name;
+        let name =
+          msg.chat.username
+            ? "@" + msg.chat.username
+            : (msg.chat.first_name || "Unknown");
 
-        // ───── ACTIVATE ON /START ─────
-        if (text === "/start") {
-          if (!chats[chat_id]) {
-            chats[chat_id] = name;
-            addUser(chat_id, name);
-          }
+        if (!history[chat_id]) history[chat_id] = [];
 
-          await fetch(
-            `https://api.telegram.org/bot${token}/sendMessage`,
-            {
-              method: "POST",
-              headers: {"Content-Type": "application/x-www-form-urlencoded"},
-              body: `chat_id=${chat_id}&text=Bot activated`
-            }
-          );
-
-          continue;
+        if (!chats[chat_id]) {
+          chats[chat_id] = name;
+          addUser(chat_id, name);
         }
 
-        if (chats[chat_id]) {
-          showMessage(name, text);
+        // ───── TEXT ─────
+        if (msg.text) {
+          saveMessage(chat_id, name, msg.text, "text");
+        }
+
+        // ───── PHOTO ─────
+        if (msg.photo) {
+          let fileId = msg.photo[msg.photo.length - 1].file_id;
+          saveMessage(chat_id, name, fileId, "photo");
+        }
+
+        // ───── AUDIO ─────
+        if (msg.audio) {
+          saveMessage(chat_id, name, msg.audio.file_id, "audio");
+        }
+
+        // ───── VIDEO ─────
+        if (msg.video) {
+          saveMessage(chat_id, name, msg.video.file_id, "video");
         }
       }
     }
@@ -128,7 +145,7 @@ async function poll() {
   setTimeout(poll, 1000);
 }
 
-// ───── ADD USER ─────
+// ───── USERS ─────
 function addUser(id, name) {
   let div = document.createElement("div");
   div.className = "user";
@@ -136,39 +153,140 @@ function addUser(id, name) {
 
   div.onclick = () => {
     currentChat = id;
-    document.getElementById("messages").innerHTML = "";
+    renderChat();
   };
 
   document.getElementById("sidebar").appendChild(div);
 }
 
-// ───── SHOW MESSAGE ─────
-function showMessage(name, text) {
+// ───── SAVE MESSAGE ─────
+function saveMessage(chat_id, name, data, type) {
+  history[chat_id].push({ name, data, type });
+
+  if (chat_id === currentChat) {
+    renderChat();
+  }
+}
+
+// ───── RENDER CHAT ─────
+async function renderChat() {
   let box = document.getElementById("messages");
-  box.innerHTML += `<div><b>${name}:</b> ${text}</div>`;
+  box.innerHTML = "";
+
+  if (!history[currentChat]) return;
+
+  for (let m of history[currentChat]) {
+
+    if (m.type === "text") {
+      box.innerHTML += `<div><b>${m.name}:</b> ${m.data}</div>`;
+    }
+
+    else if (m.type === "photo") {
+      let url = await getFileUrl(m.data);
+      box.innerHTML += `
+        <div><b>${m.name}:</b><br>
+        <img src="${url}" style="max-width:250px;border-radius:10px">
+        </div>`;
+    }
+
+    else if (m.type === "audio") {
+      let url = await getFileUrl(m.data);
+      box.innerHTML += `
+        <div><b>${m.name}:</b><br>
+        <audio controls src="${url}"></audio>
+        </div>`;
+    }
+
+    else if (m.type === "video") {
+      let url = await getFileUrl(m.data);
+      box.innerHTML += `
+        <div><b>${m.name}:</b><br>
+        <video controls width="250" src="${url}"></video>
+        </div>`;
+    }
+  }
+
+  box.scrollTop = box.scrollHeight;
+}
+
+// ───── GET FILE URL ─────
+async function getFileUrl(file_id) {
+  let r = await fetch(
+    `https://api.telegram.org/bot${token}/getFile?file_id=${file_id}`
+  );
+
+  let data = await r.json();
+
+  return `https://api.telegram.org/file/bot${token}/${data.result.file_path}`;
 }
 
 // ───── SEND MESSAGE ─────
-async function sendMsg() {
-  if (!currentChat) return;
+async function sendMessage() {
+  if (!currentChat) return alert("Select chat first!");
 
-  let msg = document.getElementById("msg").value;
+  let text = document.getElementById("msg").value;
+  let file = document.getElementById("file").files[0];
 
-  await fetch(
-    `https://api.telegram.org/bot${token}/sendMessage`,
-    {
-      method: "POST",
-      headers: {"Content-Type": "application/x-www-form-urlencoded"},
-      body: `chat_id=${currentChat}&text=${msg}`
+  if (file) {
+    let form = new FormData();
+    form.append("chat_id", currentChat);
+
+    if (file.type.startsWith("image/")) {
+      form.append("photo", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        method: "POST",
+        body: form
+      });
+
+    } else if (file.type.startsWith("audio/")) {
+      form.append("audio", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
+        method: "POST",
+        body: form
+      });
+
+    } else if (file.type.startsWith("video/")) {
+      form.append("video", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendVideo`, {
+        method: "POST",
+        body: form
+      });
+
+    } else {
+      form.append("document", file);
+
+      await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+        method: "POST",
+        body: form
+      });
     }
-  );
 
-  showMessage("You", msg);
+    document.getElementById("file").value = "";
+    return;
+  }
+
+  if (!text.trim()) return;
+
+  let body = new URLSearchParams();
+  body.append("chat_id", currentChat);
+  body.append("text", text);
+
+  await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded"
+    },
+    body: body.toString()
+  });
+
   document.getElementById("msg").value = "";
 }
 
 poll();
-</script>
 
+</script>
 </body>
 </html>
